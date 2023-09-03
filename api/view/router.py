@@ -53,24 +53,10 @@ def create_view(
         Project.ProjectID == project_id,
         EmbeddingAlias.EmbeddingID == None  # This filters out the segments that have embeddings
     ).all()
-    """segments_todo = db.query(SegmentAlias).join(
-        Sentence, Sentence.SentenceID == SegmentAlias.SentenceID
-    ).join(
-        Dataset, Dataset.DatasetID == Sentence.DatasetID
-    ).join(
-        Project, Project.ProjectID == Dataset.ProjectID
-    ).join(
-        User, User.Username == Project.Username
-    ).outerjoin(
-        EmbeddingAlias, and_(
-            EmbeddingAlias.SegmentID == SegmentAlias.SegmentID,
-            EmbeddingAlias.ModelName == embedding_model.name
-        )
-    ).filter(
-        User.Username == current_user.username,
-        Project.ProjectID == project_id,
-        EmbeddingAlias.EmbeddingID == None  # This filters out the segments that have embeddings
-    ).all()"""
+    if len(segments_and_sentences) > 0:
+        segments, sentences = zip(*segments_and_sentences)
+    else:
+        segments, sentences = [], []
 
     last_time = current_time
     current_time = time.time()
@@ -92,17 +78,19 @@ def create_view(
     last_time = current_time
     current_time = time.time()
     print(f"Prepareing Embedding segments took {current_time - last_time} seconds.")
-    embedding_values = embedding_model.transform(segments_and_sentences)
+    embedding_values = embedding_model.transform(segments, sentences)
     last_time = current_time
     current_time = time.time()
     print(f"Calculating Embeddings took {current_time - last_time} seconds.")
+    print(f"Embedding values shape: {len(embedding_values)}")
+    print(f"Segments: {len(segments)}")
     embedding_mappings = [
         {
             "SegmentID": segment.SegmentID,
             "ModelName": embedding_model.name,
             "EmbeddingValues": pickle.dumps(embedding_value)
         }
-        for embedding_value, segment in zip(embedding_values, segments_todo)
+        for embedding_value, segment in zip(embedding_values, segments)
     ]
 
     # Bulk insert embeddings
@@ -143,7 +131,7 @@ def create_view(
         Project.ProjectID == project_id,
         PositionAlias.PositionID == None  # This filters out the embeddings that already have positions
     ).all()
-
+    print("Embeddings TODO:", len(embeddings_todo))
     last_time = current_time
     current_time = time.time()
     print(f"Querying the database for Position segments took {current_time - last_time} seconds.")

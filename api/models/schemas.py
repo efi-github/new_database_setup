@@ -105,85 +105,52 @@ class BertEmbeddingModel(BaseModel):
             with torch.no_grad():
                 outputs = model(**batch_inputs)
                 embeddings = outputs.last_hidden_state
+                embeddings = embeddings.cpu().numpy()
                 batch_ids = sentences_id[i * BATCH_SIZE:(i + 1) * BATCH_SIZE]
-                all_embeddings.update({id: embedding for id, embedding in zip(batch_ids, embeddings)})
+                batched_offset_mapping = inputs['offset_mapping'][i * BATCH_SIZE:(i + 1) * BATCH_SIZE]
+                batched_attention_mask = inputs['attention_mask'][i * BATCH_SIZE:(i + 1) * BATCH_SIZE]
+
+                all_embeddings.update({id: (embedding, offset, mask) for id, embedding, offset, mask in zip(batch_ids, embeddings, batched_offset_mapping, batched_attention_mask)})
         return all_embeddings
 
-    def transform(self, segments_and_sentences) -> torch.Tensor:
-        segments, sentences = segments_and_sentences[0], segments_and_sentences[1]
+    def transform(self, segments, sentences) -> torch.Tensor:
         unique_sentences = list(set(sentences))
         print(f"BertEmbedding.transform() with #{len(segments)} segments")
         if len(segments) == 0:
             return np.array([])
         sentence_embedding = self.transform_sentences(unique_sentences)
-        origin_time = time.time()
-        current_time = origin_time
-        # Load the tokenizer and model from Hugging Face
-        tokenizer = BertTokenizerFast.from_pretrained(**self.bert_arguments)
-        model = BertModel.from_pretrained(**self.bert_arguments)
+        positions = self.get_segment_positions_2(segments, sentences, sentence_embedding)
+        print(len(sentence_embedding))
+        print(len(positions))
+        return self.segment_embedding([sentence_embedding[s.SentenceID][0] for s in sentences], positions)
 
-        # Move the model to the GPU if available
-        if torch.cuda.is_available():
-            model.to('cuda')
-        last_time = current_time
-        current_time = time.time()
-        print(f"Loading the model took {current_time - last_time} seconds.")
-        sentences = [s.sentence.Text for s in segments]
-        last_time = current_time
-        current_time = time.time()
-        print(f"fetching sentences took {current_time - last_time} seconds.")
-        inputs = tokenizer(sentences, padding=True, truncation=True, return_tensors="pt", return_offsets_mapping=True, return_attention_mask=True)
-        del sentences
-        last_time = current_time
-        current_time = time.time()
-        print(f"Tokenization took {current_time - last_time} seconds.")
 
-        positions = self.get_segment_positions(inputs, segments)
+    def get_segment_positions_2(self, segments, sentence, embeddings):
+        def find_subrange(true_range, all_ranges):
+            start, end = true_range
+            mask = (all_ranges[:, 0] <= end) & (all_ranges[:, 1] >= start)
+            result = torch.nonzero(mask).squeeze().tolist()
+            del mask
+            return result
 
-        last_time = current_time
-        current_time = time.time()
-        print(f"Getting Positions of the segments took {current_time - last_time} seconds.")
+        results = []
+        for i in range(len(segments)):
+            id = sentence[i].SentenceID
+            start = segments[i].StartPosition
+            len_seg = len(segments[i].Text)
+            attention_mask = embeddings[id][2]
+            offset = embeddings[id][1]
+            valid_length = torch.where(attention_mask == 0)[0][0] if 0 in attention_mask else len(
+                attention_mask)
+            temp_offsets = offset[:valid_length]
+            result = find_subrange((start, start + len_seg), temp_offsets)
+            if type(result) != type([]):
+                result = [result]
+            results.append(result)
+            del valid_length, temp_offsets, start, len_seg
 
-        dataset = TensorDataset(inputs['input_ids'], inputs['attention_mask'])
-        BATCH_SIZE = 256
-        dataloader = DataLoader(dataset, batch_size=BATCH_SIZE, shuffle=False)  # Use your desired batch size
+        return results
 
-        last_time = current_time
-        current_time = time.time()
-        print(f"Setting up set and loader took {current_time - last_time} seconds.")
-
-        model.eval()  # Set the model to evaluation mode
-
-        all_embeddings = []
-
-        for i, (batch_input_ids, batch_attention_mask) in enumerate(tqdm.tqdm(dataloader)):
-            # Prepare the batch
-            batch_inputs = {
-                'input_ids': batch_input_ids,
-                'attention_mask': batch_attention_mask
-            }
-            batch_positions = positions[i * BATCH_SIZE:(i + 1) * BATCH_SIZE]
-
-            if torch.cuda.is_available():
-                batch_inputs = {key: tensor.to('cuda') for key, tensor in batch_inputs.items()}
-
-            with torch.no_grad():
-                outputs = model(**batch_inputs)
-                embeddings = outputs.last_hidden_state
-
-                all_embeddings.append(torch.tensor(self.segment_embedding(embeddings.cpu().numpy(), batch_positions)))
-
-        # Combine all embeddings
-        del batch_input_ids, batch_attention_mask, batch_inputs, outputs
-        torch.cuda.empty_cache()
-        final_embeddings = torch.cat(all_embeddings, dim=0)
-
-        # Move final tensor to CPU and convert to NumPy
-        #final_embeddings_numpy = final_embeddings.cpu().numpy()
-
-        print(f"Generating embeddings took {time.time() - current_time} seconds.")
-        print(f"Total time taken: {time.time() - origin_time} seconds.")
-        return final_embeddings
 
 
     def transform1(self, segments) -> torch.Tensor:
@@ -256,10 +223,7 @@ class BertEmbeddingModel(BaseModel):
 
     def segment_embedding(self, embeddings, positions):
         averaged_embeddings = []
-        print(positions)
         for emb, pos in zip(embeddings, positions):
-            if len(pos) == 0:
-                print(emb)
             selected_embeddings = emb[pos, :]
             mean_embedding = np.mean(selected_embeddings, axis=0)
             averaged_embeddings.append(mean_embedding)
