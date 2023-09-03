@@ -22,8 +22,13 @@ def print_all_segments(db_url):
         print(f"Sentence ID: {segment.SentenceID}")
         print(f"Annotation ID: {segment.AnnotationID}")
         annotation = segment.annotation
-        print(f"Annotation Text: {annotation.AnnotationText}")
-        print(f"Project ID: {annotation.ProjectID}")
+        if annotation:
+            print(f"Annotation Text: {annotation.AnnotationText}")
+            print(f"Project ID: {annotation.ProjectID}")
+        sentence = segment.sentence
+        if sentence:
+            #print(f"Sentence ID: {sentence.SentenceID}")
+            print(f"Text: {sentence.Text}")
         print("-------------------------------")
 
     session.close()

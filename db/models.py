@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Text, ForeignKey, LargeBinary, Table
+from sqlalchemy import Column, Integer, String, Text, ForeignKey, LargeBinary, Table, Float
 from sqlalchemy.orm import relationship
 from .base import Base
 
@@ -102,7 +102,8 @@ class Position(Base):
     PositionID = Column(Integer, primary_key=True)
     EmbeddingID = Column(Integer, ForeignKey('Embedding.EmbeddingID', ondelete="CASCADE"))
     ModelName = Column(String, ForeignKey('ReductionModel.ModelName')) # New Foreign Key
-    PositionValues = Column(LargeBinary, nullable=False)
+    Posx = Column(Float, nullable=False)
+    Posy = Column(Float, nullable=False)
 
     embedding = relationship("Embedding", back_populates="positions")
     reduction_model = relationship("ReductionModel", back_populates="positions") # New relationship
@@ -133,10 +134,10 @@ class View(Base):
 
     ViewID = Column(Integer, primary_key=True)
     ProjectID = Column(Integer, ForeignKey('Project.ProjectID', ondelete="CASCADE"))
-    EmbeddingModelName = Column(String, ForeignKey('EmbeddingModel.ModelName')) # Foreign Key
-    ReductionModelName = Column(String, ForeignKey('ReductionModel.ModelName')) # Foreign Key
+    EmbeddingModelName = Column(String, ForeignKey('EmbeddingModel.ModelName'))
+    ReductionModelName = Column(String, ForeignKey('ReductionModel.ModelName'))
 
     project = relationship("Project", back_populates="views")
-    embedding_model = relationship("EmbeddingModel") # New relationship
-    reduction_model = relationship("ReductionModel") # New relationship
-    datasets = relationship("Dataset", secondary=view_dataset_association) # New many-to-many relationship
+    embedding_model = relationship("EmbeddingModel")
+    reduction_model = relationship("ReductionModel")
+    datasets = relationship("Dataset", secondary=view_dataset_association)
