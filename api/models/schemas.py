@@ -1,6 +1,5 @@
 import time
-from bisect import bisect_left
-
+from torch.nn.utils.rnn import pad_sequence
 from typing import Union, List, Any
 import torch
 from fastapi import Depends
@@ -10,6 +9,7 @@ from pydantic import BaseModel, Field
 import numpy as np
 import umap
 import tqdm
+from utilities import Timer
 
 from db.session import get_db
 
@@ -72,27 +72,56 @@ class BertEmbeddingModel(BaseModel):
         if len(segments) == 0:
             raise ValueError("The data is empty.")
 
+    def collate_fn(self, batch):
+        input_ids, attention_mask, offset_mapping, sentence_id = zip(*batch)
+        input_ids = [torch.tensor(x) for x in input_ids]
+        attention_mask = [torch.tensor(x) for x in attention_mask]
+        input_ids = pad_sequence(input_ids, batch_first=True, padding_value=0)
+        attention_mask = pad_sequence(attention_mask, batch_first=True, padding_value=0)
+        return input_ids, attention_mask, offset_mapping, sentence_id
 
     def transform_sentences(self, sentences):
         tokenizer = BertTokenizerFast.from_pretrained(**self.bert_arguments)
         model = BertModel.from_pretrained(**self.bert_arguments)
         if torch.cuda.is_available():
             model.to('cuda')
+            torch.cuda.empty_cache()
 
-        sentences_id = [s.SentenceID for s in sentences]
-        sentences_text = [s.Text for s in sentences]
-        inputs = tokenizer(sentences_text, padding=True, truncation=True, return_tensors="pt", return_offsets_mapping=True,
-                           return_attention_mask=True)
+        # Das speichern der Satz ids und texte.
+        with Timer("Fetching Dataset"):
+            sentences_id = np.array([s.SentenceID for s in sentences])
+            sentences_text = [s.Text for s in sentences]
 
-        dataset = TensorDataset(inputs['input_ids'], inputs['attention_mask'])
-        BATCH_SIZE = 256
-        dataloader = DataLoader(dataset, batch_size=BATCH_SIZE, shuffle=False)
+        # Tokenization
+        with Timer("Tokenization"):
+            inputs = tokenizer(sentences_text, return_tensors="np", return_offsets_mapping=True,
+                               return_attention_mask=True)
+
+        # Sortieren der Sätze nach der Länge
+        with Timer("Sorting"):
+            # sortiert von lang nach kurz, damit es schnell abbricht falls die maximale größe nicht unterstützt wird
+            sorted_indices = np.argsort([-len(ids) for ids in inputs['input_ids']])
+            sorted_input_ids_array = inputs['input_ids'][sorted_indices]
+            sorted_attention_mask_array = inputs['attention_mask'][sorted_indices]
+            sorted_offset_mapping_array = inputs['offset_mapping'][sorted_indices]
+            sorted_sentences_id = sentences_id[sorted_indices]
+
+        # Erstellen des Datasets und Dataloader
+        with Timer("Creating Dataset and Loader"):
+            BATCH_SIZE = 124
+            dataset = np.stack((sorted_input_ids_array, sorted_attention_mask_array,sorted_offset_mapping_array, sorted_sentences_id), axis=1)
+            dataloader = DataLoader(dataset, batch_size=BATCH_SIZE, shuffle=False, collate_fn=self.collate_fn)
 
         model.eval()  # Set the model to evaluation mode
 
         all_embeddings = {}
 
-        for i, (batch_input_ids, batch_attention_mask) in enumerate(tqdm.tqdm(dataloader)):
+        for i, (batch_input_ids, batch_attention_mask, batch_offset_mapping, batch_sentence_ids) in enumerate(tqdm.tqdm(dataloader)):
+
+            # Alle 10 batches die GPU leeren
+            if i % 10 == 0:
+                torch.cuda.empty_cache()
+
             # Prepare the batch
             batch_inputs = {
                 'input_ids': batch_input_ids,
@@ -106,12 +135,10 @@ class BertEmbeddingModel(BaseModel):
                 outputs = model(**batch_inputs)
                 embeddings = outputs.last_hidden_state
                 embeddings = embeddings.cpu().numpy()
-                batch_ids = sentences_id[i * BATCH_SIZE:(i + 1) * BATCH_SIZE]
-                batched_offset_mapping = inputs['offset_mapping'][i * BATCH_SIZE:(i + 1) * BATCH_SIZE]
-                batched_attention_mask = inputs['attention_mask'][i * BATCH_SIZE:(i + 1) * BATCH_SIZE]
+                all_embeddings.update({id: (embedding, offset, mask) for id, embedding, offset, mask in zip(batch_sentence_ids, embeddings, batch_offset_mapping, batch_attention_mask)})
 
-                all_embeddings.update({id: (embedding, offset, mask) for id, embedding, offset, mask in zip(batch_ids, embeddings, batched_offset_mapping, batched_attention_mask)})
         return all_embeddings
+
 
     def transform(self, segments, sentences) -> torch.Tensor:
         unique_sentences = list(set(sentences))
@@ -129,6 +156,7 @@ class BertEmbeddingModel(BaseModel):
         def find_subrange(true_range, all_ranges):
             start, end = true_range
             mask = (all_ranges[:, 0] <= end) & (all_ranges[:, 1] >= start)
+            mask = torch.Tensor(mask)
             result = torch.nonzero(mask).squeeze().tolist()
             del mask
             return result
@@ -150,74 +178,6 @@ class BertEmbeddingModel(BaseModel):
             del valid_length, temp_offsets, start, len_seg
 
         return results
-
-
-
-    def transform1(self, segments) -> torch.Tensor:
-        print(f"BertEmbedding.transform() with #{len(segments)} segments")
-        if len(segments) == 0:
-            return np.array([])
-        origin_time = time.time()
-        current_time = origin_time
-        # Load the tokenizer and model from Hugging Face
-        tokenizer = BertTokenizerFast.from_pretrained(**self.bert_arguments)
-        model = BertModel.from_pretrained(**self.bert_arguments)
-
-        # Move the model to the GPU if available
-        if torch.cuda.is_available():
-            model.to('cuda')
-        last_time = current_time
-        current_time = time.time()
-        print(f"Loading the model took {current_time - last_time} seconds.")
-        strings = list(map(self.get_segment_string, segments))
-        inputs = tokenizer(strings, padding=True, truncation=True, return_tensors="pt", return_offsets_mapping=True, return_attention_mask=True)
-
-        positions = list(map(self.get_segment_position, [{key: [value] for key, value in zip(inputs.keys(), values)}
-                                                                for values in zip(*inputs.values())
-                                                        ], segments))
-        last_time = current_time
-        current_time = time.time()
-        print(f"Getting Positions of the segments took {current_time - last_time} seconds.")
-        strings = list(map(self.get_segment_string, segments))
-        inputs = tokenizer(strings, padding=True, truncation=True, return_tensors="pt", return_offsets_mapping=True,
-                           return_attention_mask=True)
-        last_time = current_time
-        current_time = time.time()
-        print(f"Tokenizing the segments took {current_time - last_time} seconds.")
-        batch_size = 32  # Choose an appropriate batch size
-        num_batches = int(np.ceil(len(segments) / batch_size))
-
-        all_embeddings = []
-
-        for i in tqdm.tqdm(range(num_batches)):
-            # Extract the batch from the inputs
-            batch_input_ids = inputs['input_ids'][i * batch_size: (i + 1) * batch_size]
-            batch_attention_mask = inputs['attention_mask'][i * batch_size: (i + 1) * batch_size]
-            positions_batch = positions[i * batch_size: (i + 1) * batch_size]
-
-            # Prepare the input dictionary for this batch
-            batch_inputs = {
-                'input_ids': batch_input_ids,
-                'attention_mask': batch_attention_mask
-            }
-
-            # Move the batch to the GPU if available
-            if torch.cuda.is_available():
-                batch_inputs = {key: tensor.to('cuda') for key, tensor in batch_inputs.items()}
-
-            # Generate embeddings for this batch
-            # Generate embeddings for this batch
-            with torch.no_grad():
-                outputs = model(**batch_inputs)
-                embeddings = outputs.last_hidden_state
-
-                # Append the tensor to the list without moving it to CPU or converting to NumPy
-                all_embeddings.append(self.segment_embedding(embeddings.cpu(), positions_batch))
-
-
-        print(f"Generating embeddings took {time.time() - current_time} seconds.")
-        print(f"Total time taken: {time.time() - origin_time} seconds.")
-        return all_embeddings#self.segment_embedding(final_embeddings.cpu().numpy(), positions)
 
 
 
@@ -290,33 +250,3 @@ def test():
     print(reduced_embeddings[:5])
     print(reduced_embeddings[-5:])
 
-
-
-"""    def transform1(self, segments) -> torch.Tensor:
-        print(f"BertEmbedding.transform() with #{len(segments)} segments")
-        if len(segments) == 0:
-            return np.array([])
-        # Load the tokenizer and model from Hugging Face
-        tokenizer = BertTokenizerFast.from_pretrained(**self.bert_arguments)
-        model = BertModel.from_pretrained(**self.bert_arguments)
-
-        # Move the model to the GPU if available
-        if torch.cuda.is_available():
-            model.to('cuda')
-
-        strings = list(map(self.get_segment_string, segments))
-        inputs = tokenizer(strings, padding=True, truncation=True, return_tensors="pt", return_offsets_mapping=True, return_attention_mask=True)
-
-        positions = list(map(self.get_segment_position, [{key: [value] for key, value in zip(inputs.keys(), values)}
-                                                                for values in zip(*inputs.values())
-                                                        ], segments))
-        # Move the inputs to the GPU if available
-        if torch.cuda.is_available():
-            inputs = {key: tensor.to('cuda') for key, tensor in inputs.items() if key in ['input_ids', 'attention_mask']}
-
-        # Generate embeddings using BERT model
-        with torch.no_grad():
-            outputs = model(**inputs)
-            embeddings = outputs.last_hidden_state
-
-        return self.segment_embedding(embeddings.cpu().numpy(), positions)"""
