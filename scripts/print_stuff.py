@@ -1,6 +1,6 @@
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
-from db.models import User, Project, Dataset, Sentence, Annotation, Segment, Embedding, Position, EmbeddingModel, ReductionModel, View  # Replace 'your_models_file' with the actual name of your models file
+from db.models import User, Project, Dataset, Sentence, Annotation, Segment, Embedding, Position, View, CombinedModel  # Replace 'your_models_file' with the actual name of your models file
 from db.session import SessionLocal
 
 session = SessionLocal()
@@ -15,7 +15,7 @@ def print_model(model_instance):
 
 # Query and print all instances for each type
 def print_all_instances():
-    for model_class in [User, Project, Dataset, Sentence, Annotation, Segment, Embedding, Position, EmbeddingModel, ReductionModel, View]:
+    for model_class in [User, Project, Dataset, Sentence, Annotation, Segment, Embedding, Position, CombinedModel , View]:
         print(f"======== {model_class.__name__} Instances ========")
         for instance in session.query(model_class).all()[:10]:
             print_model(instance)
@@ -42,4 +42,4 @@ def print_specific_instances(project_id, username):
 
 if __name__ == '__main__':
     print_all_instances()
-    print_specific_instances(4, 'string')
+    print_specific_instances(1, 'string')

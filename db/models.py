@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Text, ForeignKey, LargeBinary, Table, Float
+from sqlalchemy import Column, Integer, String, Text, ForeignKey, LargeBinary, Table, Float, UniqueConstraint
 from sqlalchemy.orm import relationship
 from .base import Base
 
@@ -42,6 +42,7 @@ class Project(Base):
     datasets = relationship("Dataset", back_populates="project")
     annotations = relationship("Annotation", back_populates="project")
     views = relationship("View", back_populates="project")
+    combined_models = relationship("CombinedModel", back_populates="project")
 
 
 class Sentence(Base):
@@ -88,12 +89,12 @@ class Embedding(Base):
 
     EmbeddingID = Column(Integer, primary_key=True)
     SegmentID = Column(Integer, ForeignKey('Segment.SegmentID', ondelete="CASCADE"))
-    ModelName = Column(String, ForeignKey('EmbeddingModel.ModelName')) # New Foreign Key
+    ModelID = Column(Integer, ForeignKey('CombinedModel.ModelID'))  # Changed from ModelName to ModelID
     EmbeddingValues = Column(LargeBinary, nullable=False)
 
     segment = relationship("Segment", back_populates="embedding")
     positions = relationship("Position", back_populates="embedding")
-    embedding_model = relationship("EmbeddingModel", back_populates="embeddings") # New relationship
+    combined_model = relationship("CombinedModel") # New relationship
 
 
 class Position(Base):
@@ -101,32 +102,26 @@ class Position(Base):
 
     PositionID = Column(Integer, primary_key=True)
     EmbeddingID = Column(Integer, ForeignKey('Embedding.EmbeddingID', ondelete="CASCADE"))
-    ModelName = Column(String, ForeignKey('ReductionModel.ModelName')) # New Foreign Key
+    ModelID = Column(Integer, ForeignKey('CombinedModel.ModelID'))
     Posx = Column(Float, nullable=False)
     Posy = Column(Float, nullable=False)
 
     embedding = relationship("Embedding", back_populates="positions")
-    reduction_model = relationship("ReductionModel", back_populates="positions") # New relationship
+    combined_model = relationship("CombinedModel") # New relationship
 
 
-class EmbeddingModel(Base):
-    __tablename__ = "EmbeddingModel"
+class CombinedModel(Base):
+    __tablename__ = "CombinedModel"
 
-    ModelName = Column(String(255), nullable=False, unique=True, primary_key=True)
+    ModelID = Column(Integer, primary_key=True)
+    ProjectID = Column(Integer, ForeignKey('Project.ProjectID', ondelete="CASCADE"))
+    ModelName = Column(String(255), nullable=False)
     ModelDescription = Column(Text)
-    ModelPickle = Column(LargeBinary)
+    ModelFile = Column(String(1000), nullable=False)
 
-    embeddings = relationship("Embedding", back_populates="embedding_model")
+    project = relationship("Project", back_populates="combined_models")
 
-
-class ReductionModel(Base):
-    __tablename__ = "ReductionModel"
-
-    ModelName = Column(String(255), nullable=False, unique=True, primary_key=True)
-    ModelDescription = Column(Text)
-    ModelPickle = Column(LargeBinary)
-
-    positions = relationship("Position", back_populates="reduction_model")
+    __table_args__ = (UniqueConstraint('ProjectID', 'ModelName', name='_project_modelname_uc'),)
 
 
 class View(Base):
@@ -134,10 +129,11 @@ class View(Base):
 
     ViewID = Column(Integer, primary_key=True)
     ProjectID = Column(Integer, ForeignKey('Project.ProjectID', ondelete="CASCADE"))
-    EmbeddingModelName = Column(String, ForeignKey('EmbeddingModel.ModelName'))
-    ReductionModelName = Column(String, ForeignKey('ReductionModel.ModelName'))
+    EmbeddingModelID = Column(Integer, ForeignKey('CombinedModel.ModelID'))  # Changed from ModelName to ModelID
+    ReductionModelID = Column(Integer, ForeignKey('CombinedModel.ModelID'))  # Changed from ModelName to ModelID
+
 
     project = relationship("Project", back_populates="views")
-    embedding_model = relationship("EmbeddingModel")
-    reduction_model = relationship("ReductionModel")
+    embedding_combined_model = relationship("CombinedModel", foreign_keys=[EmbeddingModelID])
+    reduction_combined_model = relationship("CombinedModel", foreign_keys=[ReductionModelID])
     datasets = relationship("Dataset", secondary=view_dataset_association)
