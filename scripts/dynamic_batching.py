@@ -17,6 +17,7 @@ from nltk.corpus import movie_reviews
 
 nltk.download('movie_reviews')
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+device = "cpu"
 
 def initialize():
     sentences = reuters.sents()
@@ -142,8 +143,8 @@ def unsorted_dyn_batch(sentences, batch_size):
 if __name__ == "__main__":
     current_time = time.time()
     sentences = initialize_movie_reviews()
-    sentences.extend(sentences)
-    sentences.extend(sentences)
+    #sentences.extend(sentences)
+    #sentences.extend(sentences)
     #sentences = sentences[:1000]
     batch_size = 64
     print(f"Number of sentences: {len(sentences)}")
@@ -151,8 +152,6 @@ if __name__ == "__main__":
     current_time = time.time()
     print(f"Initializing took {current_time - last_time} seconds.")
     a = sorted_dyn_batch(sentences, batch_size)
-    print(len(a[324]))
-    print(a[0])
     last_time = current_time
     current_time = time.time()
     print(f"Sorted dynamic batching embedding took {current_time - last_time} seconds.")

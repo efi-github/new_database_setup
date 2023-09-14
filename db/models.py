@@ -3,11 +3,6 @@ from sqlalchemy.orm import relationship
 from .base import Base
 
 
-view_dataset_association = Table('view_dataset', Base.metadata,
-    Column('ViewID', Integer, ForeignKey('View.ViewID')),
-    Column('DatasetID', Integer, ForeignKey('Dataset.DatasetID'))
-)
-
 class User(Base):
     __tablename__ = "User"
 
@@ -56,7 +51,6 @@ class Sentence(Base):
 
     dataset = relationship("Dataset", back_populates="sentences")  # Changed from project to dataset
     segments = relationship("Segment", back_populates="sentence")
-
 
 class Annotation(Base):
     __tablename__ = "Annotation"
@@ -107,7 +101,7 @@ class Position(Base):
     Posy = Column(Float, nullable=False)
 
     embedding = relationship("Embedding", back_populates="positions")
-    combined_model = relationship("CombinedModel") # New relationship
+    combined_model = relationship("CombinedModel")
 
 
 class CombinedModel(Base):
@@ -136,4 +130,3 @@ class View(Base):
     project = relationship("Project", back_populates="views")
     embedding_combined_model = relationship("CombinedModel", foreign_keys=[EmbeddingModelID])
     reduction_combined_model = relationship("CombinedModel", foreign_keys=[ReductionModelID])
-    datasets = relationship("Dataset", secondary=view_dataset_association)

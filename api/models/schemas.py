@@ -19,41 +19,7 @@ from utilities import Timer
 from db.session import get_db
 
 
-class Model(BaseModel):
-    def fit(self, data):
-        raise NotImplementedError("This method should be implemented in a child class.")
-
-    def transform(self, data):
-        raise NotImplementedError("This method should be implemented in a child class.")
-"""
-class C_Umap(Model):
-    umap_arguments: dict = Field(dict(), description="Arguments for Umap")
-    name: str = ""
-    fitted: bool = False
-
-    def fit(self, data: Union[np.ndarray, list]) -> bool:
-        if len(data) == 0:
-            raise ValueError("The data is empty.")
-        self._model = umap.UMAP(**self.umap_arguments)
-        self._model.fit(data)
-        self.fitted = True
-        return True
-
-    def transform(self, data: Union[np.ndarray, list]) -> np.ndarray:
-        if len(data) == 0:
-            return np.array([])
-        print(f"Umap.transform() with #{len(data)} embeddings")
-        if self._model is None:
-            raise ValueError("The UMAP model has not been fitted yet.")
-        transformed_data = self._model.transform(data)
-        return transformed_data
-
-    def __str__(self):
-        return f"C_Umap({self.umap_arguments})"
-        
-"""
-
-class Umap(Model):
+class Umap():
     arguments: dict = Field(dict(), description="Arguments for Umap")
     name: str = ""
     fitted: bool = False
@@ -94,7 +60,7 @@ class SemiSupervisedUmap(Umap):
         return f"SemiSupervisedUmap({self.arguments})"
 
 
-class BertEmbeddingModel(BaseModel):
+class BertEmbeddingModel:
     arguments: dict = Field({"pretrained_model_name_or_path": "bert-base-uncased"},
                                  description="Arguments for BERT")
     name: str = ""
@@ -133,9 +99,10 @@ class BertEmbeddingModel(BaseModel):
         tokenizer = BertTokenizerFast.from_pretrained(**self.arguments)
         model = BertModel.from_pretrained(**self.arguments)
         max_input_length = model.config.max_position_embeddings
-
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        model.to(device)
         if torch.cuda.is_available():
-            model.to('cuda')
+
             torch.cuda.empty_cache()
 
         # Das speichern der Satz ids und texte.
@@ -183,7 +150,7 @@ class BertEmbeddingModel(BaseModel):
             }
 
             if torch.cuda.is_available():
-                batch_inputs = {key: tensor.to('cuda') for key, tensor in batch_inputs.items()}
+                batch_inputs = {key: tensor.to(device) for key, tensor in batch_inputs.items()}
 
             with torch.no_grad():
                 outputs = model(**batch_inputs)
@@ -197,7 +164,7 @@ class BertEmbeddingModel(BaseModel):
     def get_segment_positions(self, segments, sentence, embeddings):
         def find_subrange(true_range, all_ranges):
             start, end = true_range
-            mask = (all_ranges[:, 0] <= end) & (all_ranges[:, 1] >= start)
+            mask = (all_ranges[:, 0] <= end) & (all_ranges[:, 1] >= start) & (all_ranges[:, 0] != all_ranges[:, 1])
             mask = torch.Tensor(mask)
             result = torch.nonzero(mask).squeeze().tolist()
             del mask
@@ -243,8 +210,7 @@ class BertEmbeddingModel(BaseModel):
 MODELS = {
     "umap": Umap,
     "semisupervised_umap": SemiSupervisedUmap,
-    "bert": BertEmbeddingModel,
-#    "cuml_umap": C_Umap
+    "bert": BertEmbeddingModel
 }
 
 

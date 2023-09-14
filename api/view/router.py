@@ -19,7 +19,8 @@ from utilities import Timer
 router = APIRouter()
 model_directory = "/home/efi/PycharmProjects/new_database_setup/api/models/model_files"
 
-def get_model(model_data: ModelDefinition, project_id, username, db: Session = Depends(get_db), name_prefix = ""):
+
+def get_model(model_data: ModelDefinition, project_id, username, db: Session = Depends(get_db), name_prefix=""):
     def get_model_db(model_name, project_id):
         print(model_name, project_id)
         return (
@@ -29,9 +30,10 @@ def get_model(model_data: ModelDefinition, project_id, username, db: Session = D
             .filter(models.CombinedModel.ModelName == model_name)
             .first()
         )
+
     name = model_data.name
     args = model_data.args
-    model = MODELS[name](fitted = False, arguments = args)
+    model = MODELS[name](fitted=False, arguments=args)
     model_data.name = name_prefix + model.__str__()
     db_model = get_model_db(model_data.name, project_id)
     if not db_model:
@@ -40,6 +42,7 @@ def get_model(model_data: ModelDefinition, project_id, username, db: Session = D
     with open(f"{model_directory}/{db_model.ModelFile}", "rb") as f:
         model = pickle.load(f)
     return model, db_model
+
 
 def update_model(model_data, model, project_id, user):
     filename = f"{user}_{project_id}_{model_data.name}.pkl".replace("-", "_").replace(" ", "_").replace("/", "_")
@@ -60,13 +63,14 @@ def save_model(model_data, model, project_id, user, db: Session = Depends(get_db
     db.add(db_model)
     db.commit()
 
+
 @router.post("/create")
 def create_view(
-    project_id: int,
-    embedding_model_data: ModelDefinition = Body(...),
-    reduction_model_data: ModelDefinition = Body(...),
-    db: Session = Depends(get_db),
-    current_user: TokenData = Depends(get_current_user)
+        project_id: int,
+        embedding_model_data: ModelDefinition = Body(...),
+        reduction_model_data: ModelDefinition = Body(...),
+        db: Session = Depends(get_db),
+        current_user: TokenData = Depends(get_current_user)
 ):
     result = (
         db.query(models.Project)
@@ -80,7 +84,8 @@ def create_view(
     # initialize, so get the models necessary
     with Timer("Get embedding and reduction models"):
         embedding_model, db_e = get_model(embedding_model_data, project_id, current_user.username, db)
-        reduction_model, db_r = get_model(reduction_model_data, project_id, current_user.username, db, name_prefix=db_e.ModelName + "_")
+        reduction_model, db_r = get_model(reduction_model_data, project_id, current_user.username, db,
+                                          name_prefix=db_e.ModelName + "_")
 
     # get any segments that don't have embeddings
     # get both the segments and their corresponding sentence
@@ -105,7 +110,7 @@ def create_view(
         if len(segments_and_sentences) > 0:
             segments, sentences = zip(*segments_and_sentences)
         del segments_and_sentences
-    if len(segments)> 0:
+    if len(segments) > 0:
         with Timer("Generate Embeddings"):
             if not hasattr(embedding_model, "fitted") or not embedding_model.fitted:
                 embedding_model.fit(segments, sentences)
@@ -133,25 +138,25 @@ def create_view(
         )
 
         # Main query to find embeddings
-        embeddings_todo = db.query(Embedding).\
-            join(CombinedModel, CombinedModel.ModelID == Embedding.ModelID).\
-            join(Project, Project.ProjectID == CombinedModel.ProjectID).\
+        embeddings_todo = db.query(Embedding). \
+            join(CombinedModel, CombinedModel.ModelID == Embedding.ModelID). \
+            join(Project, Project.ProjectID == CombinedModel.ProjectID). \
             filter(
-                and_(
-                    Project.ProjectID == project_id,
-                    CombinedModel.ModelID == db_e.ModelID
-                )
-            ).\
+            and_(
+                Project.ProjectID == project_id,
+                CombinedModel.ModelID == db_e.ModelID
+            )
+        ). \
             filter(
-                not_(
-                    exists().where(
-                        and_(
-                            Position.EmbeddingID == Embedding.EmbeddingID,
-                            Position.ModelID == db_r.ModelID
-                        )
+            not_(
+                exists().where(
+                    and_(
+                        Position.EmbeddingID == Embedding.EmbeddingID,
+                        Position.ModelID == db_r.ModelID
                     )
                 )
-            ).all()
+            )
+        ).all()
         logging.log(logging.INFO, f"Embeddings: #{len(embeddings_todo)}")
         embeddings_arrays = np.array([])
         if len(embeddings_todo) > 0:
@@ -197,17 +202,13 @@ def create_view(
     return return_dictionary
 
 
-
-
-
-
 @router.post("/create1")
 def create_view1(
-    project_id: int,
-    embedding_model_data: ModelDefinition = Body(...),
-    reduction_model_data: ModelDefinition = Body(...),
-    db: Session = Depends(get_db),
-    current_user: TokenData = Depends(get_current_user)
+        project_id: int,
+        embedding_model_data: ModelDefinition = Body(...),
+        reduction_model_data: ModelDefinition = Body(...),
+        db: Session = Depends(get_db),
+        current_user: TokenData = Depends(get_current_user)
 ):
     origin_time = time.time()
     current_time = origin_time
@@ -386,7 +387,9 @@ def create_view1(
     }
 
 
-
 if __name__ == "__main__":
     db = SessionLocal()
-    res = create_view(1, ModelDefinition(name="bert", args={"pretrained_model_name_or_path": "dbmdz/bert-large-cased-finetuned-conll03-english"}), ModelDefinition(name="umap", args={"n_jobs" : -1}), db=db, current_user=TokenData(username="string"))
+    res = create_view(1, ModelDefinition(name="bert", args={
+        "pretrained_model_name_or_path": "dbmdz/bert-large-cased-finetuned-conll03-english"}),
+                      ModelDefinition(name="umap", args={"n_jobs": -1}), db=db,
+                      current_user=TokenData(username="string"))
